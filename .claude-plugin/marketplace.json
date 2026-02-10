@@ -1,15 +1,15 @@
 {
-  "name": "skills-dev",
-  "description": "Development marketplace for Patrick's personal skills collection",
+  "name": "patmagee-marketplace",
+  "description": "Curated Claude skills collection by Patrick Magee",
   "owner": {
     "name": "Patrick Magee",
     "email": "me@patrickmagee.dev"
   },
   "plugins": [
     {
-      "name": "skills",
-      "description": "Personal skills collection: multi-agent deliberation and more",
-      "version": "0.1.0",
+      "name": "patmagee-skills",
+      "description": "A curated collection of Claude skills for multi-agent deliberation and more",
+      "version": "0.1.1",
       "source": "./",
       "author": {
         "name": "Patrick Magee",

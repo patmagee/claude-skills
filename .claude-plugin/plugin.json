@@ -1,7 +1,7 @@
 {
-  "name": "skills",
-  "description": "Personal skills collection: multi-agent deliberation and more",
-  "version": "0.1.0",
+  "name": "patmagee-skills",
+  "description": "A curated collection of Claude skills for multi-agent deliberation and more",
+  "version": "0.1.1",
   "author": {
     "name": "Patrick Magee",
     "email": "me@patrickmagee.dev"

@@ -1,0 +1,13 @@
+{
+  "name": "skills",
+  "description": "Personal skills collection: multi-agent deliberation and more",
+  "version": "0.1.0",
+  "author": {
+    "name": "Patrick Magee",
+    "email": "me@patrickmagee.dev"
+  },
+  "homepage": "https://github.com/patmagee/skills",
+  "repository": "https://github.com/patmagee/skills",
+  "license": "MIT",
+  "keywords": ["skills", "multi-agent", "deliberation", "parliament", "debate", "problem-solving"]
+}

@@ -1,13 +1,13 @@
 {
   "name": "patmagee-skills",
   "description": "A curated collection of Claude skills for multi-agent deliberation and more",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": {
     "name": "Patrick Magee",
     "email": "me@patrickmagee.dev"
   },
-  "homepage": "https://github.com/patmagee/skills",
-  "repository": "https://github.com/patmagee/skills",
+  "homepage": "https://github.com/patmagee/claude-skills",
+  "repository": "https://github.com/patmagee/claude-skills",
   "license": "MIT",
   "keywords": ["skills", "multi-agent", "deliberation", "parliament", "debate", "problem-solving"]
 }

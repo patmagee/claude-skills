@@ -1,0 +1,24 @@
+# Runtime session artifacts
+parliament/
+session.json
+ledger.json
+bill.json
+final-bill.md
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+*.swp
+*.swo
+*~
+.vscode/
+.idea/

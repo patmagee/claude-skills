@@ -13,26 +13,25 @@ skills/                             # The repo
 ├── .gitignore
 └── skills/                         # All skills live here
     └── open-parliament/            # One directory per skill
-        ├── open-parliament/        # Inner dir is the installable skill
-        │   ├── SKILL.md            # Entry point
-        │   ├── agents/             # Agent prompts
-        │   ├── references/         # Schemas, templates, guides
-        │   └── scripts/            # Helper scripts
+        ├── SKILL.md                # Entry point (required)
+        ├── agents/                 # Agent prompts
+        ├── references/             # Schemas, templates, guides
+        ├── scripts/                # Helper scripts
         ├── README.md               # Skill-specific human docs
         └── CLAUDE.md               # Skill-specific dev/AI docs
 ```
 
 ## Conventions
 
-Each skill lives under `skills/` and follows a double-directory pattern: `skills/<name>/<name>/SKILL.md`. The outer directory holds documentation (README.md, CLAUDE.md). The inner directory is the installable skill itself — what gets loaded when the skill is activated.
+Each skill lives under `skills/<name>/` with `SKILL.md` at the top level of that directory. This flat structure is required for the plugin system to auto-discover skills.
 
 SKILL.md is always the entry point. It contains the orchestration instructions that Claude follows when the skill is triggered. Frontmatter at the top of SKILL.md declares the skill's name, description, and trigger phrases.
 
 ## Adding a Skill
 
 1. Create `skills/<skill-name>/` under the skills directory
-2. Create `skills/<skill-name>/<skill-name>/SKILL.md` with frontmatter and instructions
-3. Add supporting files (agents/, references/, scripts/) inside the inner directory
+2. Create `skills/<skill-name>/SKILL.md` with frontmatter and instructions
+3. Add supporting files (agents/, references/, scripts/) in the same directory
 4. Add `skills/<skill-name>/README.md` for human documentation
 5. Add `skills/<skill-name>/CLAUDE.md` for architecture and modification notes
 6. Update the root README.md skills table

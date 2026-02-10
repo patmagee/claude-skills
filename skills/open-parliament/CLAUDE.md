@@ -4,7 +4,7 @@
 
 Open Parliament is a Claude skill that orchestrates multi-agent deliberation. It spawns representative AI agents (via the Task tool) that debate a problem through structured rounds of Q&A, amendment, and voting. A Speaker agent manages procedure. The user acts as Prime Minister with veto power.
 
-The skill entry point is `open-parliament/SKILL.md`. That file contains the full orchestration instructions that Claude follows when running a parliament session.
+The skill entry point is `SKILL.md`. That file contains the full orchestration instructions that Claude follows when running a parliament session.
 
 ## Project Layout
 
@@ -79,7 +79,7 @@ Run the scripts standalone to verify the math:
 
 ```bash
 # Init with 5 agents
-python3 open-parliament/scripts/init_parliament.py \
+python3 scripts/init_parliament.py \
   --working-dir /tmp/test-parl \
   --num-seats 5 \
   --problem "Test" \
@@ -87,7 +87,7 @@ python3 open-parliament/scripts/init_parliament.py \
 
 # Run 6 rounds of reassignment to verify convergence + clock
 for i in $(seq 6); do
-  python3 open-parliament/scripts/reassign_temperatures.py \
+  python3 scripts/reassign_temperatures.py \
     --session-file /tmp/test-parl/session.json
 done
 ```

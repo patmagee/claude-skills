@@ -60,6 +60,34 @@ Sent when a representative drafts or updates the bill.
 }
 ```
 
+### OPENING_STATEMENT
+
+A representative's opening contribution before bill drafting begins. Produced
+during the Opening Statements phase.
+
+```json
+{
+  "id": "msg-002",
+  "type": "OPENING_STATEMENT",
+  "round": 0,
+  "timestamp": "...",
+  "from": "rep_1",
+  "content": {
+    "briefing": {
+      "facts": ["Concrete facts relevant to this rep's motives"],
+      "constraints": ["Hard constraints the solution must respect"],
+      "precedents": ["Prior art or relevant examples"],
+      "open_questions": ["Things the parliament should investigate"]
+    },
+    "direction": {
+      "approach": "3-5 sentence description of proposed direction",
+      "principle": "One-sentence core principle driving the approach",
+      "trade_offs": "What this direction sacrifices and why"
+    }
+  }
+}
+```
+
 ### QUESTION
 
 A representative asks a question directed at another representative.
@@ -96,7 +124,16 @@ A representative responds to a question.
   "content": {
     "answer": "The bill proposes an event-driven invalidation model using pub/sub. When any node updates data, it publishes an invalidation event that all other nodes subscribe to.",
     "concessions": "I acknowledge this adds operational complexity, which I know concerns your constituents.",
-    "stance": "maintain"
+    "stance": "maintain",
+    "motive_scores": {
+      "performance": 4,
+      "scalability": 3
+    },
+    "amendment_position": {
+      "amendment_id": "amend-001",
+      "position": "endorse",
+      "reason": "This aligns with our performance requirements."
+    }
   }
 }
 ```
@@ -106,6 +143,23 @@ The `stance` field indicates whether the respondent's position changed:
 - `"soften"` — Open to compromise on this point
 - `"concede"` — Accepting the questioner's concern as valid and agreeing to address it
 - `"challenge"` — Pushing back on the premise of the question
+
+The `motive_scores` field is required on every ANSWER. Each key is a motive name
+matching the representative's assigned motives, and each value is 1-5:
+1 = unaddressed, 2 = inadequate, 3 = partial, 4 = mostly addressed, 5 = fully
+addressed. These scores are tracked by the orchestrator and used by the Speaker
+to gate votes (no vote while any motive scores below 3, unless forced by clock
+or round limit).
+
+The `amendment_position` field is optional. Include it when the exchange
+relates to a pending amendment, to formally register endorsement or opposition.
+Values: `"endorse"`, `"oppose"`, `"abstain"`.
+
+**Optional motion attachment**: Both QUESTION and ANSWER messages may include
+an optional top-level `motion` field (alongside `type`, `from`, `content`,
+etc.) when the representative wants to make a procedural request. The
+orchestrator extracts this and logs it as a separate MOTION entry in the
+ledger. See the MOTION schema below.
 
 ### AMENDMENT
 
@@ -166,6 +220,10 @@ A representative casts their vote on the current bill.
   "content": {
     "vote": "YES",
     "reasoning": "While not perfect, this bill adequately addresses my constituents' core concerns about performance and includes the caching layer we advocated for.",
+    "motive_scores": {
+      "performance": 4,
+      "scalability": 3
+    },
     "reservations": "I still have concerns about the timeline. I'd prefer a phased rollout.",
     "conditions": []
   }
@@ -253,7 +311,7 @@ Records the Prime Minister's (user's) decision.
 }
 ```
 
-Decision values: `"approve"`, `"veto"`, `"amend_and_approve"`.
+Decision values: `"approve"`, `"veto"`, `"amend_and_approve"`, `"opening_guidance"`.
 
 ---
 
@@ -302,7 +360,12 @@ The session file (`parliament/session.json`) tracks the full state:
       "agent_id": "rep_1",
       "name": "Rep. Pragmatis",
       "temperature": 42,
+      "temperature_history": [{"round": 0, "temperature": 42}],
       "motives": ["cost efficiency", "time-to-market"],
+      "motive_satisfaction": {
+        "cost efficiency": 2,
+        "time-to-market": 3
+      },
       "is_quiet": false,
       "quiet_until_round": null,
       "voting_record": []
@@ -317,8 +380,8 @@ The session file (`parliament/session.json`) tracks the full state:
 }
 ```
 
-Status values: `"setup"`, `"drafting"`, `"debate"`, `"voting"`, `"pm_review"`,
-`"synthesis"`, `"complete"`.
+Status values: `"setup"`, `"opening_statements"`, `"evaluating_statements"`,
+`"drafting"`, `"debate"`, `"voting"`, `"pm_review"`, `"synthesis"`, `"complete"`.
 
 ### Debate Clock
 
@@ -363,7 +426,11 @@ The bill file (`parliament/bill.json`):
       "target_section": "solution",
       "action": "add",
       "description": "...",
-      "status": "incorporated"
+      "status": "incorporated",
+      "endorsements": [
+        {"agent_id": "rep_1", "position": "endorse", "round": 2},
+        {"agent_id": "rep_4", "position": "oppose", "round": 2}
+      ]
     }
   ]
 }
@@ -371,3 +438,47 @@ The bill file (`parliament/bill.json`):
 
 Amendment status values: `"proposed"`, `"debating"`, `"incorporated"`, `"rejected"`,
 `"withdrawn"`.
+
+### Amendment Incorporation Threshold
+
+An amendment can be incorporated when:
+- The proposer + at least 1 other representative has endorsed it, OR
+- The bill's drafter explicitly endorses it (drafter acceptance)
+
+The Speaker may call a formal amendment vote if positions are unclear after
+2+ exchanges of discussion. If an amendment has more oppose positions than
+endorse positions after discussion concludes, set status to `rejected`.
+
+---
+
+## Round Summaries
+
+Round summaries are generated by the orchestrator at the end of each debate
+round and stored in `parliament/round-summaries.json`. They are used for
+context windowing — providing older-round context to agents without passing
+the full message history.
+
+```json
+[
+  {
+    "round": 1,
+    "summary": "2-3 sentence narrative of what happened this round",
+    "positions": {
+      "rep_1": {"lean": "YES", "key_concern": "Wants phased rollout"},
+      "rep_2": {"lean": "NO", "key_concern": "Encryption gap unresolved"}
+    },
+    "key_shifts": [
+      "Rep. Innovatus conceded on encryption-at-rest requirement",
+      "Rep. Securitas softened on timeline after seeing phased proposal"
+    ],
+    "amendments_actioned": [
+      {"amendment_id": "amend-001", "status": "incorporated"}
+    ],
+    "vote_result": null,
+    "open_issues": ["Migration path still unresolved"]
+  }
+]
+```
+
+Round summaries are NOT added to the ledger. They are a separate runtime
+artifact used for context management.

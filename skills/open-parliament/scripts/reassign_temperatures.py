@@ -137,6 +137,15 @@ def main():
     for i, rep in enumerate(session["representatives"]):
         old_temp = rep["temperature"]
         new_temp = new_temps[i]
+
+        # Record temperature history before overwriting
+        if "temperature_history" not in rep:
+            rep["temperature_history"] = []
+        rep["temperature_history"].append({
+            "round": next_round,
+            "temperature": new_temp
+        })
+
         rep["temperature"] = new_temp
 
         old_label = temp_label(old_temp)

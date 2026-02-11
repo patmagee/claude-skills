@@ -94,6 +94,9 @@ def create_session(parliament_id, problem, representatives, constituent_issues=N
             "agent_id": agent_id,
             "name": rep["name"],
             "temperature": temperatures[i],
+            "temperature_history": [
+                {"round": 0, "temperature": temperatures[i]}
+            ],
             "motives": rep.get("motives", []),
             "is_quiet": False,
             "quiet_until_round": None,

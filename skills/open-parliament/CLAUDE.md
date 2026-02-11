@@ -33,25 +33,32 @@ The system uses a hub-and-spoke pattern. The orchestrator (the "Parliament Clerk
 All communication flows through a shared **ledger** (`parliament/ledger.json`). Agents don't talk directly to each other — the orchestrator mediates everything by reading agent output, appending it to the ledger, and passing the updated ledger to the next agent.
 
 State files created at runtime:
-- `parliament/session.json` — roster, temperatures, round counter, debate clock, status
+- `parliament/session.json` — roster, temperatures (with history), round counter, debate clock, status
 - `parliament/ledger.json` — ordered array of all messages (the shared memory)
-- `parliament/bill.json` — current bill text with amendment tracking
+- `parliament/bill.json` — current bill text with amendment tracking (including endorsements)
+- `parliament/round-summaries.json` — compressed round summaries for context windowing (created after Round 1)
 
 ## Key Mechanics
 
-**Temperature** (0–100): Shapes agent personality. Four archetypes: Visionary (75–100), Pragmatic Advocate (50–74), Rigorous Skeptic (25–49), Principled Guardian (0–24). All are constructive — no obstructionists. Assigned via stratified randomness with convergence pressure (range narrows from 5–95 to 35–65 over 6 rounds). Full details in `references/temperature-guide.md`.
+**Temperature** (0–100): Shapes agent personality. Four archetypes: Visionary (75–100), Pragmatic Advocate (50–74), Rigorous Skeptic (25–49), Principled Guardian (0–24). All are constructive — no obstructionists. Assigned via stratified randomness with convergence pressure (range narrows from 5–95 to 35–65 over 6 rounds). Full details in `references/temperature-guide.md`. Temperature history is tracked per agent across rounds, and transition narratives are provided when an agent's temperature shifts by more than 15 points between rounds.
+
+**Opening Statements**: Before any bill is drafted, all reps produce opening statements in parallel — each containing a domain briefing (facts, constraints, precedents) and a directional solution sketch. The Speaker synthesizes a shared fact base and identifies distinct solution directions. The PM reviews before drafting begins. This prevents single-perspective anchoring and surfaces domain knowledge early.
 
 **Debate Clock**: Each round has a max exchange count (shrinks from 2×seats to 1×seats) and a sentence budget per agent response (shrinks from 6 to 2). Enforced by the Speaker. Defined in the `DEBATE_CLOCK_TABLE` in `scripts/reassign_temperatures.py` and mirrored in SKILL.md and `references/temperature-guide.md`.
 
 **Observer Briefs**: The orchestrator reports to the user at three levels — narrative dispatch after each exchange, position tracker table after each round, full vote report after each vote. These are for the user only, never added to the ledger.
 
-**Amendment Lifecycle**: proposed → debating → incorporated/rejected/withdrawn. Tracked in both the ledger and `bill.json`.
+**Amendment Lifecycle**: proposed → debating → endorsed → incorporated/rejected/withdrawn. Tracked in both the ledger and `bill.json`. Endorsements are formally recorded via the `amendment_position` field on ANSWER messages. Incorporation requires proposer + 1 endorsement, or drafter acceptance.
+
+**Motions**: Representatives can attach optional `motion` fields to QUESTION and ANSWER messages to make procedural requests (call votes, request compromises, etc.). The orchestrator extracts these as separate MOTION ledger entries for the Speaker to act on.
+
+**Context Windowing**: To prevent context overflow in later rounds, older rounds are passed to agents as round summaries rather than full message logs. Only the current and previous round's messages are passed in full. The complete ledger is preserved on disk for final synthesis.
 
 **Voting**: YES or NO only (no abstentions). 50%+ passes immediately. Every NO must include conditions for flipping.
 
 ## Communication Protocol
 
-All agent messages are JSON. Ten message types: BILL_DRAFT, QUESTION, ANSWER, AMENDMENT, MOTION, VOTE, SPEAKER_RULING, VOTE_TALLY, PM_DECISION. Agents return messages *without* `id`, `round`, or `timestamp` — the orchestrator fills those in using the `next_message_id` counter from session state. Full schemas in `references/communication-protocol.md`.
+All agent messages are JSON. Eleven message types: OPENING_STATEMENT, BILL_DRAFT, QUESTION, ANSWER, AMENDMENT, MOTION, VOTE, SPEAKER_RULING, VOTE_TALLY, PM_DECISION. Agents return messages *without* `id`, `round`, or `timestamp` — the orchestrator fills those in using the `next_message_id` counter from session state. QUESTION and ANSWER messages may include an optional `motion` field that the orchestrator extracts as a separate MOTION entry. ANSWER messages may include an optional `amendment_position` field for formal endorsement tracking. Full schemas in `references/communication-protocol.md`.
 
 ## Scripts
 
@@ -72,6 +79,17 @@ Both Python 3 scripts are self-contained with no external dependencies.
 **Adding a new agent role**: Create a new prompt file in `agents/`, add spawn instructions to SKILL.md, and define any new message types in the communication protocol.
 
 **Adjusting seat count limits**: The system works with 3–9 seats. Below 3 you lose meaningful debate; above 9 the rounds get very long. These limits are soft suggestions in SKILL.md Phase 1, Step 3.
+
+## Session Phases
+
+The session flows through 6 phases (status values in parentheses):
+
+1. **Opening Parliament** (`setup`) — Interactive setup with the user
+2. **Opening Statements** (`opening_statements` → `evaluating_statements`) — All reps produce statements, Speaker synthesizes, PM reviews
+3. **Bill Drafting** (`drafting`) — Selected drafter writes initial bill informed by all statements
+4. **Debate Rounds** (`debate` → `voting`) — Structured Q&A with amendments, motions, and votes
+5. **PM Review** (`pm_review`) — User approves, vetoes, or amends
+6. **Final Synthesis** (`synthesis` → `complete`) — Drafter produces final markdown document
 
 ## Testing
 

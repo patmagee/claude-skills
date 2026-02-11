@@ -123,18 +123,61 @@ Once the user confirms the setup, create the session state:
 
 ---
 
-## Phase 2: Bill Drafting (Round 0)
+## Phase 2: Opening Statements (Round 0)
 
-Bill drafting occurs in **Round 0**. The first debate round is Round 1.
+Before any bill is drafted, every representative presents an opening statement.
+This surfaces domain knowledge and exposes competing solution directions so the
+parliament doesn't lock into a single perspective prematurely.
 
-### Step 5: Elect a Drafter
+### Step 5: Gather Opening Statements
 
-Spawn a **Speaker subagent** (using the Task tool) with instructions from
-`agents/speaker.md`. Provide the full session state. The Speaker chooses a drafter
-— typically the representative with the broadest motives or the most centrist
-temperature.
+Spawn ALL representatives in parallel (multiple Task calls in one message).
+Each representative receives:
 
-### Step 6: Draft the Initial Bill
+- The problem statement
+- Their motives and temperature
+- The full roster
+- Instructions to produce an OPENING_STATEMENT (see `agents/representative.md`)
+
+Each statement contains:
+1. A **briefing** on facts, constraints, and precedents from their motive area
+2. A **directional sketch** of their preferred solution approach (3-5 sentences)
+
+Append all statements to the ledger. Update session status to
+`"opening_statements"`.
+
+### Step 6: Speaker Evaluates Directions
+
+Spawn the Speaker with the EVALUATE_STATEMENTS task (see `agents/speaker.md`).
+All opening statements are visible in the ledger. The Speaker:
+
+1. Synthesizes the briefings into a shared **fact base** — the key facts,
+   constraints, and assumptions the parliament should treat as common ground
+2. Identifies the distinct solution directions proposed (typically 2-4)
+3. Selects a drafter — the rep whose direction best synthesizes multiple
+   concerns, or whose motives are broadest
+
+The Speaker's evaluation is logged as a SPEAKER_RULING with action
+`evaluate_statements`. Update session status to `"evaluating_statements"`.
+
+### Step 7: PM Reviews Opening Statements
+
+Present the fact base and identified solution directions to the user. The PM can:
+
+- Add facts or constraints the representatives missed
+- Signal preference for a solution direction (non-binding but influential)
+- Approve or override the Speaker's drafter selection
+
+Record any PM input as a PM_DECISION with decision `opening_guidance`.
+
+---
+
+## Phase 3: Bill Drafting (Round 0)
+
+Bill drafting occurs after opening statements, still in **Round 0**. The first
+debate round is Round 1.
+
+### Step 8: Draft the Initial Bill
 
 Spawn the selected **Representative subagent** with instructions to draft the
 initial bill. Pass them:
@@ -142,17 +185,23 @@ initial bill. Pass them:
 - The problem statement
 - Their motives
 - The full roster (so they can anticipate objections)
+- **All opening statements** (the full set, not just their own)
+- The Speaker's fact base synthesis
+- Any PM guidance from Step 7
 - The bill structure from `references/bill-template.md`
+- Instructions to synthesize across opening statements, not just draft from
+  their own direction
 
 The drafter proposes a solution, structured into clear sections. They should
 acknowledge other constituents' concerns even if the draft doesn't fully resolve
 them — this gives the other representatives something concrete to debate.
 
 Write the draft to `parliament/bill.json` and append the action to the ledger.
+Update session status to `"drafting"`.
 
 ---
 
-## Phase 3: Debate Rounds (Max 6 Rounds)
+## Phase 4: Debate Rounds (Max 6 Rounds)
 
 This is the heart of the deliberation. Each round follows this structure:
 
@@ -191,17 +240,29 @@ Update `debate_clock` in session.json at the start of each round.
 The Speaker manages structured Q&A. For each exchange:
 
 1. **Speaker selects a representative** to speak and names who they address.
-2. **The speaking representative** is spawned as a subagent. They read the full
-   ledger and current bill, then produce a message: a question, critique, or
-   proposed amendment addressed to a specific other representative. Their behavior
-   is shaped by their temperature (see `references/temperature-guide.md`).
-   **Remind them of their response budget.**
+2. **The speaking representative** is spawned as a subagent. They read the
+   ledger context (see Context Windowing below) and current bill, then produce a
+   message: a question, critique, or proposed amendment addressed to a specific
+   other representative. Their behavior is shaped by their temperature (see
+   `references/temperature-guide.md`). **Remind them of their response budget.**
+   If their temperature shifted by more than 15 points since last round, include
+   a transition narrative (see Temperature Transitions below).
 3. **The addressed representative** is spawned to respond. **Remind them of their
-   response budget.**
+   response budget.** Include transition narrative if applicable.
 4. **Both messages are appended** to the ledger. Increment `exchanges_this_round`.
+4b. **Check for motions**: If either representative's response includes a `motion`
+    field, extract it and append a separate MOTION message to the ledger (using
+    the MOTION schema from the communication protocol). Pass the motion to the
+    Speaker as part of the next NEXT_ACTION decision.
+4c. **Check for amendment positions**: If a response includes an
+    `amendment_position` field, record the endorsement in the corresponding
+    amendment's `endorsements` array in `parliament/bill.json`. Check if the
+    incorporation threshold is met (proposer + 1 endorsement, or drafter
+    acceptance) — if so, incorporate the amendment.
 5. **Report to the user** (see Observer Briefs below).
 6. **Speaker decides**: Continue? Call a vote? Quiet someone? If `exchanges_this_round`
    hits `max_exchanges_per_round`, the Speaker MUST call a vote or end the round.
+   If a motion was extracted in step 4b, include it in the Speaker's context.
 
 **Every representative MUST speak at least once per round.** The debate clock
 ensures rounds stay focused — early rounds allow more exploration, later rounds
@@ -212,14 +273,18 @@ force concision.
 Representatives can propose amendments during debate. Amendment lifecycle:
 
 1. **Proposed**: Rep submits an AMENDMENT message. Status is `proposed` in bill.json.
+   Initialize an empty `endorsements` array on the amendment object.
 2. **Debating**: Speaker acknowledges and allows discussion. Update status to `debating`.
-3. **Incorporated**: If the amendment gains support (at least one other rep endorses
-   it during debate, or the drafter accepts it), the orchestrator updates the bill
-   text and sets status to `incorporated`. Increment `bill_version` in both
-   session.json and bill.json.
-4. **Rejected**: If the amendment is explicitly opposed by a majority during debate,
-   set status to `rejected`.
-5. **Withdrawn**: The proposer may withdraw their amendment at any time.
+3. **Endorsed**: During debate about the amendment, representatives state their
+   position via the `amendment_position` field in their responses. The orchestrator
+   records these in the amendment's `endorsements` array in `parliament/bill.json`.
+4. **Incorporated**: When the amendment has the proposer + 1 endorsement (or drafter
+   acceptance), the orchestrator updates the bill text and sets status to
+   `incorporated`. Increment `bill_version` in both session.json and bill.json.
+5. **Rejected**: If the amendment has more oppose positions than endorse positions
+   after discussion concludes, set status to `rejected`. The Speaker may also call
+   a formal amendment vote if positions are unclear after 2+ exchanges.
+6. **Withdrawn**: The proposer may withdraw their amendment at any time.
 
 Amendments are recorded in the ledger AND tracked in `parliament/bill.json`.
 
@@ -239,7 +304,7 @@ When the Speaker calls a vote:
 ### Vote Outcomes
 
 - **50%+ YES**: Bill passes immediately and advances to the Prime Minister (user).
-  Go to Phase 4. No further debate rounds are needed even if rounds remain.
+  Go to Phase 5. No further debate rounds are needed even if rounds remain.
 - **Less than 50%**: Bill returns to debate. Speaker identifies key objections.
   Representatives who voted NO can propose specific amendments. Next round.
 
@@ -262,7 +327,7 @@ opinions clearly documented. The user decides.
 
 ---
 
-## Phase 4: Prime Minister Review
+## Phase 5: Prime Minister Review
 
 Present the passed (or forced) bill to the user clearly:
 
@@ -273,16 +338,16 @@ Present the passed (or forced) bill to the user clearly:
 
 The user can:
 
-- **Approve**: Accept the bill. Proceed to Phase 5.
+- **Approve**: Accept the bill. Proceed to Phase 6.
 - **Veto**: Return to the house. Record the veto as a PM_DECISION message in the
-  ledger with the user's reasoning. The parliament returns to Phase 3 as a new
+  ledger with the user's reasoning. The parliament returns to Phase 4 as a new
   debate round (Round N+1). Temperatures ARE reassigned on veto return. The veto
   round counts toward the 6-round maximum.
-- **Amend and Approve**: User modifies the bill and accepts. Proceed to Phase 5.
+- **Amend and Approve**: User modifies the bill and accepts. Proceed to Phase 6.
 
 ---
 
-## Phase 5: Final Synthesis
+## Phase 6: Final Synthesis
 
 Spawn the original drafter as a subagent to synthesize the final bill into a
 polished markdown document following `references/bill-template.md`.
@@ -290,7 +355,8 @@ polished markdown document following `references/bill-template.md`.
 Pass the drafter:
 
 1. The current `parliament/bill.json` with all amendments marked incorporated/rejected
-2. The full `parliament/ledger.json` so they can extract the debate summary
+2. The **complete** `parliament/ledger.json` (not the windowed version used during
+   debate — the final bill's deliberation record requires full detail from all rounds)
 3. The final VOTE_TALLY message so they can document votes and dissenting opinions
 4. The bill template from `references/bill-template.md`
 
@@ -315,12 +381,16 @@ Use the **Task tool** to spawn each agent. Every subagent prompt should include:
 
 1. The agent's role prompt (from `agents/speaker.md` or `agents/representative.md`)
 2. The current session state (summarized or read from `parliament/session.json`)
-3. The current ledger (read from `parliament/ledger.json`)
+3. The ledger context (using the Context Windowing strategy below — NOT
+   necessarily the full ledger for rounds 3+)
 4. The current bill (read from `parliament/bill.json`)
 5. Specific instructions for what action to take this turn
+6. For representatives: a **transition narrative** if their temperature shifted by
+   more than 15 points since their last spawn (see Temperature Transitions below)
 
-When multiple agents need to act independently (like voting), you can spawn them
-in parallel using multiple Task calls in the same message.
+When multiple agents need to act independently (like voting or opening
+statements), you can spawn them in parallel using multiple Task calls in the
+same message.
 
 ### Managing the Ledger
 
@@ -329,6 +399,75 @@ The ledger is parliament's shared memory. After each subagent returns:
 1. Parse their JSON response (per `references/communication-protocol.md`)
 2. Append the message(s) to `parliament/ledger.json`
 3. If the message contains an amendment, update `parliament/bill.json`
+
+### Round Summaries
+
+At the end of each debate round (after the last exchange and before advancing
+to the next round), generate a **round summary** for the round that just
+completed. This summary is produced by you (the Clerk), not by a subagent.
+Base it on the observer briefs you already generated during the round.
+
+Write the summary to `parliament/round-summaries.json` (an array of summary
+objects, one per completed round). Create this file after Round 1 completes.
+
+Each summary includes:
+- A 2-3 sentence narrative of what happened
+- Each representative's current lean (YES/NO/UNDECIDED) and key concern
+- Key position shifts that occurred
+- Amendments actioned and their status
+- Any vote results
+- Open issues heading into the next round
+
+See `references/communication-protocol.md` for the full schema.
+
+### Context Windowing
+
+To prevent the ledger from overwhelming agent context in later rounds, use a
+sliding window when spawning subagents:
+
+| Content | Source |
+|---------|--------|
+| Rounds 0 through R-2 | Round summaries only |
+| Round R-1 (previous) | Full messages from the ledger |
+| Round R (current) | Full messages so far this round |
+
+Always include: the full bill, session state, and all opening statements
+(from Phase 2).
+
+The full ledger remains on disk for the final synthesis phase, which needs
+the complete record for the deliberation summary. When spawning the drafter
+in Phase 6, pass the **complete** `parliament/ledger.json` (not the windowed
+version).
+
+In rounds 1-2, the full ledger is small enough to pass directly. Context
+windowing becomes important from round 3 onward.
+
+### Temperature Transitions
+
+When spawning a representative whose temperature shifted by more than 15 points
+since their last spawn, include a 1-2 sentence **transition narrative**. Generate
+this yourself based on the `temperature_history` in session.json and the archetype
+descriptions from `references/temperature-guide.md`.
+
+The narrative should connect the old engagement style to the new one while
+emphasizing that motives and prior positions remain intact. Examples:
+
+For a large shift crossing archetypes (e.g., Guardian → Pragmatic Advocate):
+
+> "Last round you engaged as a Principled Guardian (temp 18) — cautious,
+> evidence-focused, brief. This round you're a Pragmatic Advocate (temp 62).
+> Your motives haven't changed. But where last round you were anchoring the
+> group to hard constraints, this round you're more open to finding creative
+> compromises that still respect those constraints. Build on the positions
+> you've already established."
+
+For a moderate shift within the same archetype (e.g., 55 → 68):
+
+> "Your temperature shifted from 55 to 68. Your approach is largely the same
+> — still a Pragmatic Advocate — but slightly more assertive and willing to
+> push for creative solutions this round."
+
+For shifts of 15 or less, no transition narrative is needed.
 
 ### Parliamentary Observer Briefs
 

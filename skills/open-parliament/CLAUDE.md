@@ -20,7 +20,8 @@ open-parliament/
 │   └── bill-template.md            # Final bill markdown template (7 sections)
 └── scripts/
     ├── init_parliament.py          # Creates session.json, ledger.json, bill.json
-    └── reassign_temperatures.py    # Re-rolls temps + updates debate clock each round
+    ├── reassign_temperatures.py    # Re-rolls temps + updates debate clock each round
+    └── append_to_ledger.py         # Appends messages to ledger without full read
 ```
 
 ## Architecture
@@ -30,7 +31,9 @@ The system uses a hub-and-spoke pattern. The orchestrator (the "Parliament Clerk
 - **Speaker subagent** — spawned for procedural decisions (select drafter, plan round, decide next action, evaluate vote)
 - **Representative subagents** — spawned one at a time for Q&A exchanges, or in parallel for voting
 
-All communication flows through a shared **ledger** (`parliament/ledger.json`). Agents don't talk directly to each other — the orchestrator mediates everything by reading agent output, appending it to the ledger, and passing the updated ledger to the next agent.
+All communication flows through a shared **ledger** (`parliament/ledger.json`). Agents don't talk directly to each other — the orchestrator mediates everything by appending agent output to the ledger (via `scripts/append_to_ledger.py`) and directing agents to read the ledger in their own context.
+
+**Context-lean orchestration**: The orchestrator never reads reference files, agent prompts, or the full ledger. Subagents read their own files using their independent context windows. The orchestrator tracks only minimal state and delegates all heavy reading to subagents. See the Context Budget section in SKILL.md.
 
 State files created at runtime:
 - `parliament/session.json` — roster, temperatures (with history), round counter, debate clock, status
@@ -54,19 +57,23 @@ State files created at runtime:
 
 **Context Windowing**: To prevent context overflow in later rounds, older rounds are passed to agents as round summaries rather than full message logs. Only the current and previous round's messages are passed in full. The complete ledger is preserved on disk for final synthesis.
 
-**Voting**: YES or NO only (no abstentions). 50%+ passes immediately. Every NO must include conditions for flipping.
+**Dissent Pressure**: Three mechanisms prevent premature consensus: (1) Motive satisfaction scores (1-5) on every ANSWER, tracked in session.json and used by the Speaker to direct debate; (2) Concession guard — reps can only maintain/challenge in rounds 1-2, soften in round 3, concede from round 4; (3) Vote-gating — Speaker cannot call a vote while any motive scores below 3 (unless forced by clock/round limit).
+
+**Voting**: YES or NO only (no abstentions). 50%+ passes immediately. Every NO must include conditions for flipping. VOTE messages include final `motive_scores`.
 
 ## Communication Protocol
 
-All agent messages are JSON. Eleven message types: OPENING_STATEMENT, BILL_DRAFT, QUESTION, ANSWER, AMENDMENT, MOTION, VOTE, SPEAKER_RULING, VOTE_TALLY, PM_DECISION. Agents return messages *without* `id`, `round`, or `timestamp` — the orchestrator fills those in using the `next_message_id` counter from session state. QUESTION and ANSWER messages may include an optional `motion` field that the orchestrator extracts as a separate MOTION entry. ANSWER messages may include an optional `amendment_position` field for formal endorsement tracking. Full schemas in `references/communication-protocol.md`.
+All agent messages are JSON. Eleven message types: OPENING_STATEMENT, BILL_DRAFT, QUESTION, ANSWER, AMENDMENT, MOTION, VOTE, SPEAKER_RULING, VOTE_TALLY, PM_DECISION. Agents return messages *without* `id`, `round`, or `timestamp` — the orchestrator fills those in using the `next_message_id` counter from session state. QUESTION and ANSWER messages may include an optional `motion` field that the orchestrator extracts as a separate MOTION entry. ANSWER and VOTE messages include required `motive_scores` for satisfaction tracking. ANSWER messages may include an optional `amendment_position` field for formal endorsement tracking. Full schemas in `references/communication-protocol.md`.
 
 ## Scripts
 
-Both Python 3 scripts are self-contained with no external dependencies.
+All Python 3 scripts are self-contained with no external dependencies.
 
-**init_parliament.py**: Creates the three runtime JSON files. Takes `--working-dir`, `--num-seats`, `--problem`, `--representatives` (JSON array), and optionally `--issues`. Uses stratified assignment for initial temperatures. Initializes `debate_clock` with round-0 defaults.
+**init_parliament.py**: Creates the three runtime JSON files. Takes `--working-dir`, `--num-seats`, `--problem`, `--representatives` (JSON array), and optionally `--issues`. Uses stratified assignment for initial temperatures. Initializes `debate_clock` with round-0 defaults and `temperature_history` per rep.
 
-**reassign_temperatures.py**: Reads `session.json`, computes the next round's temperature range (convergence) and debate clock settings, re-rolls stratified temperatures, advances `current_round`, and writes back. Run this at the start of each debate round.
+**reassign_temperatures.py**: Reads `session.json`, computes the next round's temperature range (convergence) and debate clock settings, re-rolls stratified temperatures, appends to `temperature_history`, advances `current_round`, and writes back. Run this at the start of each debate round.
+
+**append_to_ledger.py**: Appends one or more messages to `ledger.json` with auto-generated `id`, `round`, and `timestamp` metadata. Increments `next_message_id` in `session.json`. Accepts a single JSON message or a JSON array. This is the primary mechanism for ledger writes — the orchestrator uses this script to avoid reading the full ledger into its own context window.
 
 ## Common Modifications
 

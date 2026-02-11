@@ -28,7 +28,11 @@ moving and prevents deadlocks. The user — as Prime Minister — has the final 
 
 ## Before You Begin
 
-Read these reference files to understand the full system:
+This file contains everything you need to orchestrate a parliament session. The
+reference files below exist for **subagents to read** — you do NOT need to read
+them yourself. Your context window is a finite resource; treat it as such.
+
+Reference files (for subagents, not you):
 
 1. `references/communication-protocol.md` — JSON message schemas and ledger format
 2. `agents/speaker.md` — Speaker agent behavior and prompt template
@@ -36,8 +40,9 @@ Read these reference files to understand the full system:
 4. `references/temperature-guide.md` — How temperature shapes agent personality
 5. `references/bill-template.md` — Final output format
 
-Read ALL of these before proceeding. They contain the detailed schemas and prompts
-that make this system work.
+**Do NOT read these files.** The schemas and protocols you need are documented
+inline in this file. When spawning subagents, tell them which files to read —
+they have their own context windows.
 
 ---
 
@@ -143,8 +148,15 @@ Each statement contains:
 1. A **briefing** on facts, constraints, and precedents from their motive area
 2. A **directional sketch** of their preferred solution approach (3-5 sentences)
 
-Append all statements to the ledger. Update session status to
-`"opening_statements"`.
+Append all statements to the ledger using the append script:
+
+```bash
+python3 scripts/append_to_ledger.py \
+  --working-dir ./parliament \
+  --message '[<statement1>, <statement2>, ...]'
+```
+
+Update session status to `"opening_statements"`.
 
 ### Step 6: Speaker Evaluates Directions
 
@@ -249,7 +261,8 @@ The Speaker manages structured Q&A. For each exchange:
    a transition narrative (see Temperature Transitions below).
 3. **The addressed representative** is spawned to respond. **Remind them of their
    response budget.** Include transition narrative if applicable.
-4. **Both messages are appended** to the ledger. Increment `exchanges_this_round`.
+4. **Append both messages** to the ledger using `scripts/append_to_ledger.py`.
+   Increment `exchanges_this_round` in session.json.
 4b. **Check for motions**: If either representative's response includes a `motion`
     field, extract it and append a separate MOTION message to the ledger (using
     the MOTION schema from the communication protocol). Pass the motion to the
@@ -259,6 +272,12 @@ The Speaker manages structured Q&A. For each exchange:
     amendment's `endorsements` array in `parliament/bill.json`. Check if the
     incorporation threshold is met (proposer + 1 endorsement, or drafter
     acceptance) — if so, incorporate the amendment.
+4d. **Update motive satisfaction**: If a response includes `motive_scores`,
+    update the representative's `motive_satisfaction` in session.json. These
+    scores are passed to the Speaker for vote-gating decisions.
+4e. **Enforce concession guard**: If a representative uses `soften` or `concede`
+    stance in rounds 1-2, note this as a protocol violation in the observer
+    brief and instruct the Speaker to redirect.
 5. **Report to the user** (see Observer Briefs below).
 6. **Speaker decides**: Continue? Call a vote? Quiet someone? If `exchanges_this_round`
    hits `max_exchanges_per_round`, the Speaker MUST call a vote or end the round.
@@ -375,30 +394,104 @@ Present it to the user with a link to the file.
 
 ## Orchestration Guidelines
 
+### Context Budget
+
+Your context window must last the entire parliament session — potentially 6+
+rounds of debate with 5-9 representatives. **Treat context as a non-renewable
+resource.** Every file you read, every subagent response you process, every
+observer brief you generate stays in your context permanently.
+
+Rules:
+1. **Never read reference files** (`agents/*.md`, `references/*.md`). Subagents
+   read their own role prompts and schemas.
+2. **Never read the full ledger.** Use `scripts/append_to_ledger.py` for writes.
+   Subagents read the ledger in their own context.
+3. **Read session.json and bill.json sparingly** — only when you need specific
+   values (e.g., checking a temperature for a transition narrative, confirming
+   amendment status). Prefer extracting what you need from subagent return values.
+4. **Keep observer briefs concise.** 2-3 sentences per exchange, not paragraphs.
+5. **Don't echo subagent responses** back to the user verbatim. Summarize.
+
+The subagents have independent context windows — let them do the heavy reading.
+Your job is dispatch and coordination, not analysis.
+
 ### Spawning Subagents
 
-Use the **Task tool** to spawn each agent. Every subagent prompt should include:
+Use the **Task tool** to spawn each agent. **Critical: subagents read their
+own files.** Do NOT read reference files, agent prompts, or large state files
+into your context just to paste them into a Task prompt. Your context window
+is a finite resource — protect it.
 
-1. The agent's role prompt (from `agents/speaker.md` or `agents/representative.md`)
-2. The current session state (summarized or read from `parliament/session.json`)
-3. The ledger context (using the Context Windowing strategy below — NOT
-   necessarily the full ledger for rounds 3+)
-4. The current bill (read from `parliament/bill.json`)
-5. Specific instructions for what action to take this turn
-6. For representatives: a **transition narrative** if their temperature shifted by
-   more than 15 points since their last spawn (see Temperature Transitions below)
+Every subagent prompt should include:
+
+1. **File paths to read** — tell the subagent which files to read (role prompt,
+   session state, bill, ledger). They have their own context windows.
+   - Speaker: "Read `agents/speaker.md` for your role instructions."
+   - Representative: "Read `agents/representative.md` for your role instructions."
+   - State: "Read `parliament/session.json`, `parliament/bill.json`."
+   - Ledger: "Read `parliament/ledger.json`." (Or specify context windowing
+     for rounds 3+ — see below.)
+2. **Compact task-specific context** — inline only what the subagent can't get
+   from files: the specific task (e.g., ASK_QUESTION targeting rep_2), the
+   agent's profile summary (name, motives, temperature), response budget, and
+   any transition narrative.
+3. **Context windowing instructions** — for rounds 3+, tell the subagent which
+   rounds to read in full and which to read from `parliament/round-summaries.json`.
+
+Example Task prompt (lean):
+
+```
+You are a Representative in parliament. Read `agents/representative.md` for
+your full role instructions.
+
+Read these state files:
+- `parliament/session.json` (your profile and the roster)
+- `parliament/bill.json` (the current bill)
+- `parliament/ledger.json` (debate history)
+
+Your profile: Rep. Pragmatis (rep_1), motives: [cost efficiency, time-to-market],
+temperature: 62 (Pragmatic Advocate).
+
+Transition note: Last round you were at temp 18 (Guardian). Your motives haven't
+changed, but you're now more open to creative compromise.
+
+Task: ASK_QUESTION directed at rep_3 about the security audit timeline.
+Response budget: 4 sentences.
+
+Return valid JSON matching the QUESTION schema.
+```
 
 When multiple agents need to act independently (like voting or opening
-statements), you can spawn them in parallel using multiple Task calls in the
-same message.
+statements), spawn them in parallel using multiple Task calls in the same
+message.
 
-### Managing the Ledger
+### Ledger Management
 
-The ledger is parliament's shared memory. After each subagent returns:
+The ledger is parliament's shared memory. **Never read the full ledger into
+your own context.** Use the append script instead:
 
-1. Parse their JSON response (per `references/communication-protocol.md`)
-2. Append the message(s) to `parliament/ledger.json`
-3. If the message contains an amendment, update `parliament/bill.json`
+```bash
+python3 scripts/append_to_ledger.py \
+  --working-dir ./parliament \
+  --message '<JSON message from subagent>'
+```
+
+This reads the ledger, adds metadata (id, round, timestamp), increments
+`next_message_id` in session.json, and writes both files back. You only see
+the script's confirmation output (message IDs), not the ledger contents.
+
+For multiple messages at once (e.g., parallel opening statements):
+
+```bash
+python3 scripts/append_to_ledger.py \
+  --working-dir ./parliament \
+  --message '[<msg1>, <msg2>, ...]'
+```
+
+**When you need to check a specific message** (e.g., to extract a motion or
+amendment position from a subagent's response), work from the subagent's
+return value — which is already in your context — rather than re-reading
+the ledger.
 
 ### Round Summaries
 
@@ -441,6 +534,33 @@ version).
 
 In rounds 1-2, the full ledger is small enough to pass directly. Context
 windowing becomes important from round 3 onward.
+
+### Dissent Pressure
+
+The parliament is designed to produce robust solutions, not fast agreement.
+Three mechanisms prevent premature consensus:
+
+**Motive satisfaction tracking**: Every ANSWER message includes `motive_scores`
+— the representative's assessment of how well the bill serves each of their
+motives (1-5 scale). Update `motive_satisfaction` in session.json after each
+exchange. Pass these scores to the Speaker for PLAN_ROUND and NEXT_ACTION.
+
+**Concession guard**: Representatives are restricted in which stances they
+can take in early rounds:
+
+| Round | Allowed Stances |
+|-------|----------------|
+| 1-2 | `maintain` or `challenge` only |
+| 3 | `maintain`, `challenge`, or `soften` |
+| 4+ | All stances including `concede` |
+
+When spawning representatives in rounds 1-2, explicitly remind them:
+"Concession guard is active. You may only maintain or challenge this round."
+
+**Vote-gating**: The Speaker cannot call a vote while any representative has
+a motive scoring below 3, unless forced by the debate clock hitting the
+exchange cap or reaching round 6. This ensures every motive gets meaningful
+attention before the parliament moves to a decision.
 
 ### Temperature Transitions
 

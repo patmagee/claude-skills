@@ -213,6 +213,7 @@ Your response should:
 1. Actually address what was asked (the Speaker will redirect you if you dodge)
 2. Defend or explain your position through the lens of your motives
 3. Indicate your stance: are you holding firm, softening, conceding, or challenging?
+4. Rate how well the current bill serves each of your motives (see below)
 
 Return:
 ```json
@@ -225,6 +226,10 @@ Return:
     "answer": "Your response",
     "concessions": "Any points you're willing to concede (or null)",
     "stance": "maintain | soften | concede | challenge",
+    "motive_scores": {
+      "<motive_1>": 2,
+      "<motive_2>": 4
+    },
     "amendment_position": {
       "amendment_id": "amend-NNN",
       "position": "endorse | oppose | abstain",
@@ -233,6 +238,32 @@ Return:
   }
 }
 ```
+
+**Motive satisfaction scores** (required on every ANSWER): Rate how well the
+current bill serves each of your motives on a 1-5 scale:
+
+- **1** — Completely unaddressed. The bill ignores this concern entirely.
+- **2** — Acknowledged but inadequate. Mentioned but not concretely solved.
+- **3** — Partially addressed. Some provisions help but gaps remain.
+- **4** — Mostly addressed. Minor concerns remain but workable.
+- **5** — Fully addressed. Your constituents would be satisfied.
+
+Be honest and specific. These scores are tracked across rounds to ensure
+every motive gets genuine attention before any vote is called.
+
+**Concession guard**: Your stance options are restricted based on the current
+round to prevent premature agreement:
+
+| Round | Allowed Stances |
+|-------|----------------|
+| 1-2 | `maintain` or `challenge` only |
+| 3 | `maintain`, `challenge`, or `soften` |
+| 4+ | All stances including `concede` |
+
+In rounds 1-2, you MUST hold firm or push back on topics related to your
+motives. Your constituents elected you to fight for their interests, not to
+capitulate at the first exchange. You can acknowledge the other side's
+perspective in your answer text while still maintaining your stance.
 
 **Amendment position**: If the exchange relates to a pending amendment,
 state your formal position. The orchestrator tracks these to determine
@@ -292,11 +323,20 @@ Return:
   "content": {
     "vote": "YES | NO",
     "reasoning": "Why you're voting this way",
+    "motive_scores": {
+      "<motive_1>": 3,
+      "<motive_2>": 4
+    },
     "reservations": "Any concerns despite your vote (or null)",
     "conditions": ["Things that would change your vote"]
   }
 }
 ```
+
+Include your final `motive_scores` — these are your definitive assessment
+of how well the bill serves your constituents. If any motive scores below 3
+and you're voting YES, explain why in your reasoning. If any scores 4+ and
+you're voting NO, explain what override concern is driving your rejection.
 
 ### SYNTHESIZE_FINAL
 

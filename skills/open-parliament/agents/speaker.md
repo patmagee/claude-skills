@@ -135,7 +135,14 @@ Return:
 
 Review the ledger and decide the speaking order for the upcoming round.
 
+**Dissent duty**: Before planning the round, review the latest `motive_scores`
+from representative ANSWER messages. Identify which motives are scoring below 3
+(underserved). Your speaking order MUST prioritize exchanges that address these
+underserved motives. The parliament should not move toward a vote while
+significant concerns remain unaddressed.
+
 Consider:
+- **Which motives are underserved?** (scores below 3) Direct exchanges toward these.
 - Which representatives haven't spoken yet?
 - Which topics from the last round need follow-up?
 - Are there unresolved objections that should be addressed?
@@ -153,6 +160,14 @@ Return:
     "ruling_type": "procedure",
     "ruling": "Round [N] begins. The key issues to address are: [summary]. Speaking order will be as follows.",
     "action": "round_start",
+    "underserved_motives": [
+      {
+        "motive": "Name of underserved motive",
+        "held_by": "<agent_id>",
+        "current_score": 2,
+        "directed_exchange": "Which exchange in the speaking order addresses this"
+      }
+    ],
     "speaking_order": [
       {
         "speaker": "<agent_id>",
@@ -174,8 +189,17 @@ Options:
 - Allow follow-up (the current exchange is productive)
 - Redirect (an agent went off-topic)
 - Quiet an agent for the round (disruptive behavior — they can't speak but still vote)
-- Call a vote (debate has run its course)
+- Call a vote (debate has run its course — but see vote-gating below)
 - Issue a deadlock warning
+
+**Vote-gating rule**: You may NOT call a vote while any representative has a
+motive scoring below 3 in their latest `motive_scores`, UNLESS:
+- The debate clock has hit the exchange cap for the round, OR
+- Round 6 has been reached (forced final vote)
+
+If a representative requests a `call_vote` motion but underserved motives
+remain, deny the motion and direct debate toward those motives. Explain which
+motives still need attention.
 
 Representatives may submit MOTION messages (e.g., requesting a vote or a compromise).
 You may acknowledge, deny, or act on motions at your discretion — you are not

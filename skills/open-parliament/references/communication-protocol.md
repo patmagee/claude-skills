@@ -125,6 +125,10 @@ A representative responds to a question.
     "answer": "The bill proposes an event-driven invalidation model using pub/sub. When any node updates data, it publishes an invalidation event that all other nodes subscribe to.",
     "concessions": "I acknowledge this adds operational complexity, which I know concerns your constituents.",
     "stance": "maintain",
+    "motive_scores": {
+      "performance": 4,
+      "scalability": 3
+    },
     "amendment_position": {
       "amendment_id": "amend-001",
       "position": "endorse",
@@ -139,6 +143,13 @@ The `stance` field indicates whether the respondent's position changed:
 - `"soften"` — Open to compromise on this point
 - `"concede"` — Accepting the questioner's concern as valid and agreeing to address it
 - `"challenge"` — Pushing back on the premise of the question
+
+The `motive_scores` field is required on every ANSWER. Each key is a motive name
+matching the representative's assigned motives, and each value is 1-5:
+1 = unaddressed, 2 = inadequate, 3 = partial, 4 = mostly addressed, 5 = fully
+addressed. These scores are tracked by the orchestrator and used by the Speaker
+to gate votes (no vote while any motive scores below 3, unless forced by clock
+or round limit).
 
 The `amendment_position` field is optional. Include it when the exchange
 relates to a pending amendment, to formally register endorsement or opposition.
@@ -209,6 +220,10 @@ A representative casts their vote on the current bill.
   "content": {
     "vote": "YES",
     "reasoning": "While not perfect, this bill adequately addresses my constituents' core concerns about performance and includes the caching layer we advocated for.",
+    "motive_scores": {
+      "performance": 4,
+      "scalability": 3
+    },
     "reservations": "I still have concerns about the timeline. I'd prefer a phased rollout.",
     "conditions": []
   }
@@ -345,7 +360,12 @@ The session file (`parliament/session.json`) tracks the full state:
       "agent_id": "rep_1",
       "name": "Rep. Pragmatis",
       "temperature": 42,
+      "temperature_history": [{"round": 0, "temperature": 42}],
       "motives": ["cost efficiency", "time-to-market"],
+      "motive_satisfaction": {
+        "cost efficiency": 2,
+        "time-to-market": 3
+      },
       "is_quiet": false,
       "quiet_until_round": null,
       "voting_record": []

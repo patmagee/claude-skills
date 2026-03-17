@@ -8,7 +8,7 @@ Each skill lives in its own directory and follows the Claude skill format: a `SK
 
 | Skill | Description |
 |-------|-------------|
-| [open-parliament](skills/open-parliament/) | Multi-agent deliberation system modeled on representative democracy. Spawns a parliament of AI agents with diverse personalities to debate problems through structured rounds of Q&A, amendment, and voting. |
+| [consensus-planning](skills/consensus-planning/) | Multi-agent consensus planning system. Spawns a panel of AI analysts with diverse analytical perspectives to collaboratively solve problems through structured rounds of critique, revision, and assessment. |
 
 ## Skill Structure
 

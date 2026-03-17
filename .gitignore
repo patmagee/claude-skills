@@ -1,10 +1,14 @@
 # Runtime session artifacts
 parliament/
+planning/
 session.json
 ledger.json
+log.json
 bill.json
+proposal.json
 round-summaries.json
 final-bill.md
+final-proposal.md
 
 # Python
 __pycache__/

@@ -12,7 +12,7 @@ skills/                             # The repo
 ├── CLAUDE.md                       # This file
 ├── .gitignore
 └── skills/                         # All skills live here
-    └── open-parliament/            # One directory per skill
+    └── consensus-planning/         # One directory per skill
         ├── SKILL.md                # Entry point (required)
         ├── agents/                 # Agent prompts
         ├── references/             # Schemas, templates, guides
@@ -38,11 +38,11 @@ SKILL.md is always the entry point. It contains the orchestration instructions t
 
 ## Current Skills
 
-- **open-parliament** — Multi-agent parliamentary deliberation. Spawns representative agents with temperature-based personalities to debate problems through structured rounds. See `skills/open-parliament/CLAUDE.md` for architecture details.
+- **consensus-planning** — Multi-agent consensus planning. Spawns analyst agents with perspective-based analytical styles to solve problems through structured rounds of critique, revision, and review. See `skills/consensus-planning/CLAUDE.md` for architecture details.
 
 ## Runtime Artifacts
 
-Skills may generate runtime files (JSON session state, ledger files, output documents) during execution. These are created in a `parliament/` or similar working directory at runtime — not checked into the repo. The `.gitignore` excludes common patterns.
+Skills may generate runtime files (JSON session state, log files, output documents) during execution. These are created in a `planning/` or similar working directory at runtime — not checked into the repo. The `.gitignore` excludes common patterns.
 
 ## No External Dependencies
 

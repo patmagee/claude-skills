@@ -39,11 +39,14 @@ SKILL.md is always the entry point. It contains the orchestration instructions t
 ## Current Skills
 
 - **consensus-planning** — Multi-agent consensus planning. Spawns analyst agents with perspective-based analytical styles to solve problems through structured rounds of critique, revision, and review. See `skills/consensus-planning/CLAUDE.md` for architecture details.
+- **design-memory** — Cross-repo vector store for design docs and decision records. Indexes specs with YAML frontmatter and decision confidence tiers, then surfaces prior decisions during brainstorm sessions. Requires ChromaDB and Gemini embeddings. See `skills/design-memory/SKILL.md` for commands.
 
 ## Runtime Artifacts
 
 Skills may generate runtime files (JSON session state, log files, output documents) during execution. These are created in a `planning/` or similar working directory at runtime — not checked into the repo. The `.gitignore` excludes common patterns.
 
-## No External Dependencies
+## Dependencies
 
-All scripts use Python 3 standard library only. No pip installs required.
+Most skills use Python 3 standard library only. Exceptions:
+
+- **design-memory** — Requires `chromadb`, `google-genai`, `pyyaml` installed in its own venv. See `skills/design-memory/SKILL.md` for setup.

@@ -9,6 +9,7 @@ Each skill lives in its own directory and follows the Claude skill format: a `SK
 | Skill | Description |
 |-------|-------------|
 | [consensus-planning](skills/consensus-planning/) | Multi-agent consensus planning system. Spawns a panel of AI analysts with diverse analytical perspectives to collaboratively solve problems through structured rounds of critique, revision, and assessment. |
+| [design-memory](skills/design-memory/) | Cross-repo vector store for design docs and decision records. Index, query, and surface prior design decisions before brainstorming or spec writing. Built on ChromaDB with Gemini embeddings. |
 
 ## Skill Structure
 

@@ -1,17 +1,18 @@
 ---
 name: design-memory
 description: >
-  Manage a local vector store of design docs and decision records across all repos.
-  Use this skill whenever the user wants to: index a design doc or decision record into
-  the team's design memory, search for prior design decisions relevant to current work,
+  Manage a local vector store of design docs, decision records, and design patterns across
+  all repos. Use this skill whenever the user wants to: index a design doc or decision record
+  into the team's design memory, search for prior design decisions relevant to current work,
   get context from past decisions before starting a new design session, check what's in
-  the design store, or remove outdated entries. Also trigger when the user mentions
-  "design memory", "prior decisions", "what have we decided about", "index this doc",
-  "design history", or wants to feed past decisions into a superpowers brainstorm session.
-  This skill works across repos — it maintains a single global store at ~/.design-memory/.
-  Trigger this skill even when the user just finished a brainstorm/design session and
-  might benefit from indexing the result, or when starting new design work that could
-  benefit from prior context.
+  the design store, discover or manage design patterns, or remove outdated entries. Also
+  trigger when the user mentions "design memory", "prior decisions", "what have we decided
+  about", "index this doc", "design history", "what pattern do we use", "how do we handle",
+  or wants to feed past decisions into a superpowers brainstorm session. This skill works
+  across repos — it maintains a single global store at ~/.design-memory/. Trigger this skill
+  even when the user just finished a brainstorm/design session and might benefit from indexing
+  the result, when starting new design work that could benefit from prior context, or when
+  asking about established team patterns and conventions.
 ---
 
 # Design Memory
@@ -193,6 +194,127 @@ and filtered by min-similarity (default 0.3).
 `remove` shows what would be deleted by default. Add `--force` to actually delete.
 Uses exact filename matching (not substring).
 
+## Design Patterns
+
+Patterns are cross-cutting generalizations extracted from multiple decisions. While a
+decision is a specific choice in a specific context, a pattern is an established convention:
+"When [situation], we use [approach] because [rationale]."
+
+Patterns live in a separate `design_patterns` ChromaDB collection alongside `design_docs`.
+They have their own lifecycle (draft → active → superseded) and confidence levels derived
+from supporting evidence.
+
+### Pattern Commands
+
+#### Add a pattern manually
+
+```bash
+~/.claude/skills/design-memory/.venv/bin/python \
+  ~/.claude/skills/design-memory/scripts/design_memory.py patterns add \
+    "When building REST APIs, we use cursor-based pagination because offset-based breaks under concurrent writes" \
+    --name "REST Cursor Pagination" \
+    --category api-design \
+    --evidence retry-semantics.md,api-standards.md
+```
+
+Manual patterns start as `active` status. The `--evidence` flag takes comma-separated
+filenames that must already be indexed in design_docs.
+
+#### Extract patterns via AI
+
+```bash
+~/.claude/skills/design-memory/.venv/bin/python \
+  ~/.claude/skills/design-memory/scripts/design_memory.py patterns extract \
+    [--tags api-design,infrastructure] \
+    [--repo my-service] \
+    [--min-evidence 2] \
+    [--cluster-threshold 0.70] \
+    [--dry-run]
+```
+
+Clusters related decisions by semantic similarity, then uses Gemini to synthesize
+pattern statements. AI-extracted patterns start as `draft` — use `patterns confirm`
+to promote to `active`.
+
+Use `--dry-run` first to preview clusters without making LLM calls.
+
+#### Query patterns
+
+```bash
+~/.claude/skills/design-memory/.venv/bin/python \
+  ~/.claude/skills/design-memory/scripts/design_memory.py patterns query "how do we paginate" \
+    [--top-k 5] \
+    [--category api-design] \
+    [--status active]
+```
+
+#### List, show, remove patterns
+
+```bash
+# List all patterns
+~/.claude/skills/design-memory/.venv/bin/python \
+  ~/.claude/skills/design-memory/scripts/design_memory.py patterns list \
+    [--category api-design] [--status active] [--confidence human]
+
+# Show pattern details with full evidence
+~/.claude/skills/design-memory/.venv/bin/python \
+  ~/.claude/skills/design-memory/scripts/design_memory.py patterns show <pattern_id_or_name>
+
+# Remove a pattern
+~/.claude/skills/design-memory/.venv/bin/python \
+  ~/.claude/skills/design-memory/scripts/design_memory.py patterns remove <pattern_id> [--force]
+```
+
+#### Pattern lifecycle
+
+```bash
+# Promote draft to active
+~/.claude/skills/design-memory/.venv/bin/python \
+  ~/.claude/skills/design-memory/scripts/design_memory.py patterns confirm <pattern_id>
+
+# Mark as superseded by a newer pattern
+~/.claude/skills/design-memory/.venv/bin/python \
+  ~/.claude/skills/design-memory/scripts/design_memory.py patterns supersede <old_id> <new_id>
+
+# Re-evaluate evidence from current indexed docs
+~/.claude/skills/design-memory/.venv/bin/python \
+  ~/.claude/skills/design-memory/scripts/design_memory.py patterns refresh [<pattern_id>] [--all]
+```
+
+### Pattern Confidence
+
+Pattern confidence is derived from the highest tier in its evidence:
+- **human**: at least one evidence decision is a `[HUMAN DECISION]`
+- **confirmed**: highest evidence tier is `[CONFIRMED DECISION]`
+- **ai**: all evidence is AI-extracted or `[AI DECISION]`
+
+Confidence auto-upgrades when higher-tier evidence is added.
+
+### Patterns in Context Output
+
+The `context` command automatically includes active patterns in its XML output:
+
+```xml
+<design_patterns>
+<pattern name="REST Cursor Pagination" confidence="human" evidence="3 decisions" category="api-design">
+When building REST APIs, we use cursor-based pagination because offset-based breaks under concurrent writes.
+Sources: retry-semantics.md, api-standards.md, search-api-design.md
+</pattern>
+</design_patterns>
+```
+
+Use `--no-patterns` to suppress patterns in context output.
+
+### Post-Index Pattern Check
+
+Use `--check-patterns` on the index command to check newly indexed decisions
+against existing patterns:
+
+```bash
+~/.claude/skills/design-memory/.venv/bin/python \
+  ~/.claude/skills/design-memory/scripts/design_memory.py index docs/ --check-patterns
+```
+
 ## Integrating with Superpowers Brainstorm
 
 Add the following to your global `~/.claude/CLAUDE.md`. Since superpowers reads
@@ -270,3 +392,21 @@ When a brainstorm produces a committed spec:
 2. Filter to `--decisions-only` for cleaner results
 3. Surface the human decisions and rationale
 4. Note which repo and when the decision was indexed
+
+### Pattern E: Pattern discovery and enforcement
+
+1. Run `patterns extract --dry-run` to preview potential patterns
+2. If clusters look good, run `patterns extract` to synthesize via LLM
+3. Review drafts with `patterns list --status draft`
+4. Use `patterns show <id>` to inspect evidence
+5. `patterns confirm <id>` for patterns that reflect real conventions
+6. `patterns remove <id> --force` for false positives
+7. Run `patterns refresh --all` periodically to keep evidence current
+
+### Pattern F: Answering "what pattern do we use for X?"
+
+1. Run `patterns query "X"` (e.g., `patterns query "CLI command structure"`)
+2. If a matching active pattern exists, present it with its evidence
+3. If no pattern matches but related decisions exist, suggest running
+   `patterns extract --tags <relevant-tag>` to discover implicit patterns
+4. If creating a new pattern manually, use `patterns add` with evidence links

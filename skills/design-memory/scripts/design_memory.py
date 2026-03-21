@@ -16,10 +16,13 @@ Usage:
 
 import argparse
 import hashlib
+import json
 import os
 import re
 import sys
 import textwrap
+import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -30,6 +33,37 @@ STORE_PATH = os.environ.get("DESIGN_MEMORY_STORE", os.path.expanduser("~/.design
 COLLECTION_NAME = "design_docs"
 MAX_FILE_SIZE = 500 * 1024  # 500KB
 V2_MARKER = "design_memory_v2_gemini"
+METRICS_FILE = os.path.join(STORE_PATH, "metrics.jsonl")
+
+
+class MetricsLogger:
+    """Append-only JSONL logger for design-memory usage metrics.
+
+    Each event is a single JSON line written to ~/.design-memory/metrics.jsonl.
+    The session_id is read from CLAUDE_SESSION_ID env var if available, otherwise
+    a per-process fallback is generated.
+    """
+
+    def __init__(self):
+        self._session_id = os.environ.get("CLAUDE_SESSION_ID", f"local-{uuid.uuid4().hex[:8]}")
+
+    def log(self, event_type: str, **fields):
+        """Write a single metrics event."""
+        os.makedirs(STORE_PATH, exist_ok=True)
+        record = {
+            "timestamp": datetime.now().isoformat(),
+            "session_id": self._session_id,
+            "event": event_type,
+            **fields,
+        }
+        try:
+            with open(METRICS_FILE, "a") as f:
+                f.write(json.dumps(record, default=str) + "\n")
+        except OSError:
+            pass  # Metrics are best-effort; never block the main operation
+
+
+_metrics = MetricsLogger()
 
 
 def to_sentinel_string(items: list[str]) -> str:
@@ -249,6 +283,7 @@ def extract_decision_blocks(content: str) -> list[dict]:
 
 def cmd_index(args):
     """Index one or more design docs into the vector store."""
+    t0 = time.monotonic()
     client = get_client()
     collection = get_collection(client)
 
@@ -403,6 +438,16 @@ def cmd_index(args):
         )
         indexed_count += 1
 
+    elapsed_ms = int((time.monotonic() - t0) * 1000)
+    _metrics.log(
+        "index",
+        files_indexed=indexed_count,
+        total_chunks=collection.count(),
+        decisions_by_tier=total_tiers,
+        repo=args.repo or "auto",
+        latency_ms=elapsed_ms,
+    )
+
     print(f"\nIndexed {indexed_count} document(s) into {STORE_PATH}")
     print(f"Collection now has {collection.count()} total chunks")
     if any(total_tiers.values()):
@@ -436,6 +481,7 @@ def _matches_filters(meta: dict, repo: str = None, service: str = None,
 
 def cmd_query(args):
     """Semantic search across all indexed design docs."""
+    t0 = time.monotonic()
     client = get_client()
     collection = get_collection(client)
 
@@ -490,8 +536,32 @@ def cmd_query(args):
         deduped = deduped[:args.top_k]
 
     if not deduped:
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        _metrics.log(
+            "query",
+            search_text=args.search_text,
+            results_returned=0,
+            zero_results=True,
+            latency_ms=elapsed_ms,
+        )
         print("No matching documents found.")
         return
+
+    similarities = [e["similarity"] for e in deduped]
+    cross_repo_sources = set(e["meta"].get("repo") for e in deduped)
+    elapsed_ms = int((time.monotonic() - t0) * 1000)
+    _metrics.log(
+        "query",
+        search_text=args.search_text,
+        results_returned=len(deduped),
+        zero_results=False,
+        avg_similarity=sum(similarities) / len(similarities),
+        max_similarity=max(similarities),
+        min_similarity=min(similarities),
+        repos_in_results=list(cross_repo_sources),
+        cross_repo_hits=len(cross_repo_sources) > 1,
+        latency_ms=elapsed_ms,
+    )
 
     print(f"Found {len(deduped)} relevant document(s):\n")
     for i, entry in enumerate(deduped):
@@ -517,10 +587,14 @@ def cmd_context(args):
 
     This is the integration point for superpowers brainstorm.
     """
+    t0 = time.monotonic()
+    context_id = f"ctx-{uuid.uuid4().hex[:12]}"
     client = get_client()
     collection = get_collection(client)
 
     if collection.count() == 0:
+        _metrics.log("context", context_id=context_id, search_text=args.search_text,
+                     results_returned=0, latency_ms=int((time.monotonic() - t0) * 1000))
         print("<!-- No design memory indexed yet -->")
         return
 
@@ -575,6 +649,8 @@ def cmd_context(args):
     ][:args.top_k]
 
     if not deduped:
+        _metrics.log("context", context_id=context_id, search_text=args.search_text,
+                     results_returned=0, latency_ms=int((time.monotonic() - t0) * 1000))
         print("<!-- No sufficiently relevant decisions found for this query -->")
         return
 
@@ -590,8 +666,33 @@ def cmd_context(args):
                 "similarity": entry["similarity"],
             })
 
+    # Log metrics for context generation
+    similarities = [e["similarity"] for e in deduped]
+    total_decisions_surfaced = sum(len(tier_decisions[t]) for t in tier_decisions)
+    human_decisions_surfaced = len(tier_decisions["human"])
+    docs_surfaced = [e["meta"].get("filename", "?") for e in deduped]
+    cross_repo_sources = set(e["meta"].get("repo") for e in deduped)
+    elapsed_ms = int((time.monotonic() - t0) * 1000)
+    _metrics.log(
+        "context",
+        context_id=context_id,
+        search_text=args.search_text,
+        results_returned=len(deduped),
+        decisions_surfaced=total_decisions_surfaced,
+        human_decisions_surfaced=human_decisions_surfaced,
+        confirmed_decisions_surfaced=len(tier_decisions["confirmed"]),
+        ai_decisions_surfaced=len(tier_decisions["ai"]),
+        avg_similarity=sum(similarities) / len(similarities),
+        max_similarity=max(similarities),
+        docs_surfaced=docs_surfaced,
+        repos_in_results=list(cross_repo_sources),
+        cross_repo_hits=len(cross_repo_sources) > 1,
+        latency_ms=elapsed_ms,
+    )
+
     # Output as structured context block for prompt injection
     print("<prior_design_decisions>")
+    print(f"context_id: {context_id}")
     print(f"The following prior design decisions are relevant to: {args.search_text}")
     print(f"Found {len(deduped)} relevant document(s) from the team's design history.\n")
 
@@ -640,6 +741,15 @@ def cmd_context(args):
     print("Give extra weight to HUMAN DECISIONS — these were explicitly called out by a team member.")
     print("Prioritize consistency with prior human-reviewed decisions unless there is a clear reason to diverge.")
     print("If diverging, explicitly note the prior decision and explain the rationale for the change.")
+    print()
+    print(f"<influence_tracking context_id=\"{context_id}\">")
+    print("After completing this design session, report which surfaced decisions influenced your output.")
+    print("Run: design_memory.py report-influence \\")
+    print(f"  --context-id {context_id} \\")
+    print("  --used \"Decision text 1|Decision text 2\" \\")
+    print("  --outcome aligned|diverged|partial \\")
+    print("  --notes \"Brief explanation of how decisions were used or why you diverged\"")
+    print("</influence_tracking>")
     print("</prior_design_decisions>")
 
 
@@ -726,6 +836,7 @@ def cmd_remove(args):
         return
 
     collection.delete(ids=[doc_id for doc_id, _ in ids_to_remove])
+    _metrics.log("remove", doc_id=args.doc_id, chunks_removed=len(ids_to_remove))
     print(f"\nRemoved {len(ids_to_remove)} chunk(s).")
 
 
@@ -763,6 +874,192 @@ def cmd_list(args):
             count = len([d for d in meta["decisions"].split("|") if d.strip()])
             decisions = f" [{count} decision(s)]"
         print(f"  [{svcs}] {meta.get('filename', '?')} ({meta.get('doc_type', '?')}){hr}{decisions}{tags_str}")
+
+
+def cmd_report_influence(args):
+    """Record which surfaced decisions actually influenced the calling agent's output.
+
+    This is the callback API for closing the metrics loop. The calling agent
+    (e.g. superpowers brainstorm) invokes this after completing a design session
+    to report which decisions from the context output were used, ignored, or
+    diverged from.
+    """
+    decisions_used = [d.strip() for d in args.used.split("|") if d.strip()] if args.used else []
+
+    _metrics.log(
+        "influence",
+        context_id=args.context_id,
+        outcome=args.outcome,
+        decisions_used=decisions_used,
+        decisions_used_count=len(decisions_used),
+        notes=args.notes or "",
+    )
+
+    print(f"Influence report recorded for context {args.context_id}")
+    print(f"  Outcome: {args.outcome}")
+    print(f"  Decisions used: {len(decisions_used)}")
+    if args.notes:
+        print(f"  Notes: {args.notes}")
+
+
+def cmd_metrics(args):
+    """Summarize metrics from the JSONL log."""
+    if not os.path.exists(METRICS_FILE):
+        print("No metrics recorded yet.")
+        return
+
+    events = []
+    with open(METRICS_FILE) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    events.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+
+    if not events:
+        print("No metrics recorded yet.")
+        return
+
+    # Filter by --since if provided
+    if args.since:
+        events = [e for e in events if e.get("timestamp", "") >= args.since]
+        if not events:
+            print(f"No events since {args.since}.")
+            return
+
+    # Overall counts by event type
+    event_counts = {}
+    for e in events:
+        t = e.get("event", "unknown")
+        event_counts[t] = event_counts.get(t, 0) + 1
+
+    unique_sessions = set(e.get("session_id") for e in events)
+    first_event = events[0].get("timestamp", "?")
+    last_event = events[-1].get("timestamp", "?")
+
+    print(f"=== Design Memory Metrics ===")
+    print(f"Period: {first_event[:10]} to {last_event[:10]}")
+    print(f"Total events: {len(events)}")
+    print(f"Unique sessions: {len(unique_sessions)}")
+    print()
+
+    print("Event counts:")
+    for event_type, count in sorted(event_counts.items()):
+        print(f"  {event_type}: {count}")
+    print()
+
+    # Query & context metrics
+    query_events = [e for e in events if e["event"] in ("query", "context")]
+    if query_events:
+        print("--- Retrieval Metrics ---")
+        total_queries = len(query_events)
+        zero_result = sum(1 for e in query_events if e.get("zero_results") or e.get("results_returned", 0) == 0)
+        avg_results = sum(e.get("results_returned", 0) for e in query_events) / total_queries
+        sims = [e.get("avg_similarity") for e in query_events if e.get("avg_similarity") is not None]
+        avg_sim = sum(sims) / len(sims) if sims else 0
+        max_sims = [e.get("max_similarity") for e in query_events if e.get("max_similarity") is not None]
+        avg_max_sim = sum(max_sims) / len(max_sims) if max_sims else 0
+        cross_repo = sum(1 for e in query_events if e.get("cross_repo_hits"))
+        latencies = [e.get("latency_ms") for e in query_events if e.get("latency_ms") is not None]
+        avg_latency = sum(latencies) / len(latencies) if latencies else 0
+
+        print(f"  Total queries (query+context): {total_queries}")
+        print(f"  Zero-result queries: {zero_result} ({zero_result/total_queries*100:.0f}%)")
+        print(f"  Avg results per query: {avg_results:.1f}")
+        print(f"  Avg similarity score: {avg_sim:.3f}")
+        print(f"  Avg top similarity: {avg_max_sim:.3f}")
+        print(f"  Cross-repo hits: {cross_repo} ({cross_repo/total_queries*100:.0f}%)")
+        print(f"  Avg latency: {avg_latency:.0f}ms")
+        print()
+
+    # Context-specific metrics
+    context_events = [e for e in events if e["event"] == "context"]
+    if context_events:
+        print("--- Decision Surfacing ---")
+        total_ctx = len(context_events)
+        total_surfaced = sum(e.get("decisions_surfaced", 0) for e in context_events)
+        human_surfaced = sum(e.get("human_decisions_surfaced", 0) for e in context_events)
+        confirmed_surfaced = sum(e.get("confirmed_decisions_surfaced", 0) for e in context_events)
+        ai_surfaced = sum(e.get("ai_decisions_surfaced", 0) for e in context_events)
+
+        print(f"  Context calls: {total_ctx}")
+        print(f"  Total decisions surfaced: {total_surfaced}")
+        print(f"    Human: {human_surfaced}  Confirmed: {confirmed_surfaced}  AI: {ai_surfaced}")
+        if total_ctx > 0:
+            print(f"  Avg decisions per context call: {total_surfaced / total_ctx:.1f}")
+        print()
+
+    # Influence metrics
+    influence_events = [e for e in events if e["event"] == "influence"]
+    if influence_events:
+        print("--- Influence Tracking ---")
+        total_reports = len(influence_events)
+        outcomes = {}
+        for e in influence_events:
+            o = e.get("outcome", "unknown")
+            outcomes[o] = outcomes.get(o, 0) + 1
+        total_used = sum(e.get("decisions_used_count", 0) for e in influence_events)
+
+        # Match influence reports to their context calls
+        context_ids_with_influence = set(e.get("context_id") for e in influence_events)
+        context_ids_total = set(e.get("context_id") for e in context_events if e.get("context_id"))
+        report_rate = len(context_ids_with_influence) / len(context_ids_total) * 100 if context_ids_total else 0
+
+        print(f"  Influence reports: {total_reports}")
+        print(f"  Report-back rate: {report_rate:.0f}% of context calls")
+        print(f"  Outcomes:")
+        for outcome, count in sorted(outcomes.items()):
+            print(f"    {outcome}: {count}")
+        print(f"  Total decisions marked as used: {total_used}")
+        if total_reports > 0:
+            print(f"  Avg decisions used per report: {total_used / total_reports:.1f}")
+        print()
+
+    # Index metrics
+    index_events = [e for e in events if e["event"] == "index"]
+    if index_events:
+        print("--- Indexing ---")
+        total_indexed = sum(e.get("files_indexed", 0) for e in index_events)
+        all_tiers = {"human": 0, "confirmed": 0, "ai": 0}
+        for e in index_events:
+            tiers = e.get("decisions_by_tier", {})
+            for t in all_tiers:
+                all_tiers[t] += tiers.get(t, 0)
+        latencies = [e.get("latency_ms") for e in index_events if e.get("latency_ms") is not None]
+        avg_latency = sum(latencies) / len(latencies) if latencies else 0
+
+        print(f"  Index operations: {len(index_events)}")
+        print(f"  Files indexed: {total_indexed}")
+        print(f"  Decisions indexed: human={all_tiers['human']}, confirmed={all_tiers['confirmed']}, ai={all_tiers['ai']}")
+        print(f"  Avg index latency: {avg_latency:.0f}ms")
+        print()
+
+    # Knowledge base coverage (from latest status or collection)
+    # Doc hit rate: which indexed docs have been returned in queries
+    all_docs_surfaced = set()
+    for e in query_events:
+        for doc in e.get("docs_surfaced", []):
+            all_docs_surfaced.add(doc)
+    if all_docs_surfaced:
+        try:
+            client = get_client()
+            collection = get_collection(client)
+            all_data = collection.get(include=["metadatas"])
+            all_indexed_docs = set(m.get("filename") for m in all_data["metadatas"])
+            hit_rate = len(all_docs_surfaced & all_indexed_docs) / len(all_indexed_docs) * 100 if all_indexed_docs else 0
+            print("--- Knowledge Base Coverage ---")
+            print(f"  Indexed docs: {len(all_indexed_docs)}")
+            print(f"  Docs hit by queries: {len(all_docs_surfaced & all_indexed_docs)}")
+            print(f"  Hit rate: {hit_rate:.0f}%")
+            never_hit = all_indexed_docs - all_docs_surfaced
+            if never_hit and len(never_hit) <= 10:
+                print(f"  Never queried: {', '.join(sorted(never_hit))}")
+            elif never_hit:
+                print(f"  Never queried: {len(never_hit)} docs")
+        except Exception:
+            pass  # Best-effort; don't fail metrics if store is unavailable
 
 
 def main():
@@ -822,6 +1119,31 @@ def main():
     p_list = subparsers.add_parser("list", help="List all indexed documents")
     p_list.add_argument("--repo", help="Filter by repo")
     p_list.set_defaults(func=cmd_list)
+
+    # report-influence
+    p_influence = subparsers.add_parser(
+        "report-influence",
+        help="Report which surfaced decisions influenced the calling agent's output",
+    )
+    p_influence.add_argument("--context-id", required=True, help="The context_id from the context command output")
+    p_influence.add_argument(
+        "--used",
+        default="",
+        help="Pipe-delimited list of decision texts that were used (e.g. 'Use Resilience4j|3 max retries')",
+    )
+    p_influence.add_argument(
+        "--outcome",
+        required=True,
+        choices=["aligned", "diverged", "partial", "no-relevant-decisions"],
+        help="How the surfaced decisions related to the final output",
+    )
+    p_influence.add_argument("--notes", default="", help="Brief explanation of how decisions were used or why you diverged")
+    p_influence.set_defaults(func=cmd_report_influence)
+
+    # metrics
+    p_metrics = subparsers.add_parser("metrics", help="Show usage and impact metrics summary")
+    p_metrics.add_argument("--since", help="Only show events since this ISO date (e.g. 2026-03-01)")
+    p_metrics.set_defaults(func=cmd_metrics)
 
     args = parser.parse_args()
     args.func(args)

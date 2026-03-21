@@ -177,7 +177,48 @@ Outputs an XML `<prior_design_decisions>` block with decisions grouped by
 confidence tier: human first, then confirmed, then AI. Results are deduplicated
 and filtered by min-similarity (default 0.3).
 
-### 4. Status, list, remove
+### 4. Report influence (callback API)
+
+After a design session where `context` was used, the calling agent should report
+which decisions actually influenced its output. The `context` command outputs a
+`context_id` — pass it back here to close the metrics loop.
+
+```bash
+~/.claude/skills/design-memory/.venv/bin/python \
+  ~/.claude/skills/design-memory/scripts/design_memory.py report-influence \
+    --context-id <context_id_from_output> \
+    --used "Decision text 1|Decision text 2" \
+    --outcome aligned|diverged|partial|no-relevant-decisions \
+    --notes "Brief explanation"
+```
+
+**Outcome values:**
+- `aligned` — final design followed the surfaced prior decisions
+- `diverged` — final design intentionally went a different direction
+- `partial` — some decisions were followed, others not
+- `no-relevant-decisions` — surfaced decisions weren't relevant to the task
+
+**Instructions for the calling agent:** The `context` command output includes an
+`<influence_tracking>` block with the exact command to run. After completing
+the design session, execute that command with the appropriate values. This is
+how we measure whether design memory is actually useful.
+
+### 5. View metrics
+
+```bash
+~/.claude/skills/design-memory/.venv/bin/python \
+  ~/.claude/skills/design-memory/scripts/design_memory.py metrics [--since 2026-03-01]
+```
+
+Shows aggregated metrics including:
+- Usage counts by command type and unique sessions
+- Retrieval quality (avg similarity, zero-result rate, cross-repo hits)
+- Decision surfacing stats (decisions surfaced by tier per context call)
+- Influence tracking (report-back rate, alignment outcomes, decisions actually used)
+- Knowledge base coverage (doc hit rate — which indexed docs get queried)
+- Latency (avg ms per command)
+
+### 6. Status, list, remove
 
 ```bash
 ~/.claude/skills/design-memory/.venv/bin/python \
@@ -236,6 +277,9 @@ When a brainstorm produces a committed spec:
 1. Ask: "Should I index this into design memory?"
 2. If yes, run the index command with appropriate flags.
 3. Confirm what was indexed and current store stats.
+4. If prior decisions were loaded via `context`, run `report-influence`
+   with the context_id from the context output. Report which decisions
+   were used, whether the outcome aligned or diverged, and why.
 ```
 
 ## Workflow Patterns
@@ -247,7 +291,9 @@ When a brainstorm produces a committed spec:
 3. If a specific service is the focus, use `--service` to narrow results
 4. Present a brief summary: "I found N prior decisions relevant to this work.
    Key prior choices: [list human decisions]. I'll keep these in mind."
-5. Proceed with the brainstorm, referencing prior decisions where relevant
+5. Note the `context_id` from the output for later influence reporting
+6. Proceed with the brainstorm, referencing prior decisions where relevant
+7. After the session, run `report-influence` with the context_id
 
 ### Pattern B: Post-brainstorm indexing
 

@@ -1,0 +1,25 @@
+{
+  "name": "patmagee-skills",
+  "version": "0.2.1",
+  "description": "A curated collection of Claude skills for multi-agent deliberation and more",
+  "private": true,
+  "type": "module",
+  "packageManager": "npm@10.9.4",
+  "license": "MIT",
+  "author": { "name": "Patrick Magee", "email": "me@patrickmagee.dev" },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "generate": "tsx tooling/generate.ts",
+    "validate": "tsx tooling/validate.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "gray-matter": "^4.0.3",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0",
+    "yaml": "^2.6.0",
+    "zod": "^3.23.0"
+  }
+}

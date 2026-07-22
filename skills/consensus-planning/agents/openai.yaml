@@ -1,0 +1,5 @@
+interface:
+  display_name: Consensus Planning
+  short_description: Multi-agent consensus planning system.
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,6 @@
+interface:
+  display_name: Design Memory
+  short_description: Manage a local vector store of design docs and decision
+    records across all repos.
+policy:
+  allow_implicit_invocation: true

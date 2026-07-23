@@ -9,5 +9,16 @@
   "homepage": "https://github.com/patmagee/claude-skills",
   "repository": "https://github.com/patmagee/claude-skills",
   "license": "MIT",
-  "keywords": ["skills", "multi-agent", "deliberation", "parliament", "debate", "problem-solving"]
+  "keywords": [
+    "skills",
+    "multi-agent",
+    "deliberation",
+    "parliament",
+    "debate",
+    "problem-solving"
+  ],
+  "skills": [
+    "./skills/consensus-planning",
+    "./skills/design-memory"
+  ]
 }

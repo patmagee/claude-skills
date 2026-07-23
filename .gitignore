@@ -27,3 +27,6 @@ Thumbs.db
 *~
 .vscode/
 .idea/
+
+# Node tooling
+node_modules/

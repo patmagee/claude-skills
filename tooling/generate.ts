@@ -1,4 +1,11 @@
-import { writeFileSync, readFileSync, mkdirSync } from "node:fs";
+import {
+  writeFileSync,
+  readFileSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  existsSync,
+} from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadSkills } from "./skills.js";
@@ -42,6 +49,28 @@ export function generate(root: string): void {
     if (skill.frontmatter.harnesses.includes("cursor")) {
       mkdirSync(paths.cursorOut, { recursive: true });
       writeFileSync(join(paths.cursorOut, `${skill.slug}.mdc`), renderCursorMdc(skill));
+    }
+  }
+
+  // Remove artifacts no current skill produces, so the committed output always
+  // reflects the full target state (a skill dropping a harness, or being
+  // deleted, leaves no stale file behind for the CI drift check to miss).
+  const expectedCursor = new Set(
+    skills
+      .filter((s) => s.frontmatter.harnesses.includes("cursor"))
+      .map((s) => `${s.slug}.mdc`),
+  );
+  if (existsSync(paths.cursorOut)) {
+    for (const file of readdirSync(paths.cursorOut)) {
+      if (file.endsWith(".mdc") && !expectedCursor.has(file)) {
+        rmSync(join(paths.cursorOut, file));
+      }
+    }
+  }
+  for (const skill of skills) {
+    if (!skill.frontmatter.harnesses.includes("codex")) {
+      const codexFile = join(skill.dir, "agents", "openai.yaml");
+      if (existsSync(codexFile)) rmSync(codexFile);
     }
   }
 

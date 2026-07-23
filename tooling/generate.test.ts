@@ -59,6 +59,23 @@ describe("generate", () => {
     expect(readme).not.toContain("OLD");
   });
 
+  it("removes orphaned artifacts when a skill drops harnesses", () => {
+    writeSkill("alpha", "name: alpha\ndescription: Alpha does things. Detail.");
+    generate(root);
+    expect(existsSync(join(root, "dist", "cursor", "alpha.mdc"))).toBe(true);
+    expect(existsSync(join(root, "skills", "alpha", "agents", "openai.yaml"))).toBe(true);
+
+    // alpha drops codex + cursor, keeping only claude
+    writeSkill(
+      "alpha",
+      "name: alpha\ndescription: Alpha does things. Detail.\nharnesses: [claude]",
+    );
+    generate(root);
+
+    expect(existsSync(join(root, "dist", "cursor", "alpha.mdc"))).toBe(false);
+    expect(existsSync(join(root, "skills", "alpha", "agents", "openai.yaml"))).toBe(false);
+  });
+
   it("throws when manifest versions are out of sync", () => {
     writeFileSync(
       join(root, ".claude-plugin", "plugin.json"),
